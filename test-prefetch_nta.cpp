@@ -114,7 +114,7 @@ class MeasureAccess : public jit_generator {
     // dummy access
     vmovups(zmm0, ptr[reg_addr]);
 
-    prefetchwt1
+    //prefetchwt1(ptr[reg_addr])
     mfence();
 
     // delta tsc
@@ -155,8 +155,8 @@ void test_prefetch_nta() {
 
         // prefetch nta
         for(int i = 0; i < nbytes; i+=64) {
-            _mm_prefetch(data + i, _MM_HINT_NTA);
-            //_mm_prefetch(data + i, _MM_HINT_T2);
+            // _mm_prefetch(data + i, _MM_HINT_NTA);
+            _mm_prefetch(data + i, _MM_HINT_T2);
         }
 
         spin_wait(0.001);

@@ -4,7 +4,48 @@
 
 */
 
+/*
 
+Summary: in this code even removing the prefetcher realted code, the memory access still shows cache hit.
+It should be realted with the hardware cache prefetcher enabled , the access pattern is one cacheline after another,
+which is easy to detect. so after several cache misses, hw prefetcher is enabled. Turn off the hardware prefetcher and
+comments the prefecher code, latency would increase. It proves hardware prefetcher is disalbed.
+
+
+How to turn off the hw prefetcher on core 55 of SPR.
+https://askubuntu.com/questions/1284908/disable-prefetching-on-intel-processor-on-20-04
+
+
+```
+sudo modprobe msr
+echo on | sudo tee /sys/module/msr/parameters/allow_writes
+sudo rdmsr 0x1a4h -p 55 //Read the MSR registers about the prefetcher disable, default is 20(0x20)
+sudo wrmsr 0x1a4h  0x27 -p 55
+```
+MSR offset address is in IA64_software_dev_manual 2.17, volume 4
+
+file:///C:/Users/luweizho/Downloads/325462-sdm-vol-1-2abcd-3abcd-4.pdf
+
+Apply sw prefetcher after disabling hw prefetcher, find the prefetchnta and perfetcht2 latency has minor difference when access size < L1 ,
+t2 value is longer than nta as expected but in unexpected percentange (less than 10%). sample one time would has too much software overhead.
+
+prefetchnta:  25ns for L1 hit
+prefetcht2:  27ns for L2 hit
+
+diff is about 2ns
+
+but the software overhead timing should be same for nta and t2. So let us check the diff between L1 and L2 with mlc tool
+
+sudo ./mlc --idle_latency -b2k -c0 -t10  //2k < 32 K so L1 cache hit.
+
+sudo ./mlc --idle_latency -b1024k -c0 -t10  // 2M /2k =1024, so only 1/1024 is L1 hit,  almost L2 hit.
+
+L1 hit is 1.3 ns, L2 hit is 4.1 ns. the diff is 2.8 ns. So diff is almost same with above.
+
+
+Remaining: the first 3-4 access would have big latency,software prefetcher pipeline warm up?? not sure.
+
+*/
 #ifdef _WIN32
 #include <intrin.h>
 #else
@@ -87,13 +128,15 @@ class Prefetch : public jit_generator {
 
  public:
   Prefetch(bool prefetch, uint32_t loop = 20) : via_prefetch(prefetch), unroll_loop(loop) {
-    create_kernel("DummyFMA");
+    create_kernel("PREFETCH data");
   }
   Xbyak::Reg64 reg_addr = abi_param1;
 
   void generate() {
     if (via_prefetch) {
-        prefetchnta(ptr[reg_addr]);
+        // prefetchnta(ptr[reg_addr]);
+        prefetcht2(ptr[reg_addr]);
+
         for (uint32_t i = 0; i < unroll_loop; i++) {
             vfmadd231ps(Vmm(0), Vmm(1), Vmm(2));
         }
@@ -146,11 +189,11 @@ class AccessLoad : public jit_generator {
 #define DIS_SCHEDULE 3
 #define FMA_UNROLL 20
 
-void test_prefetch_nta() {
+void test_software_prefetch() {
     MeasureAccess measure_access;
     Prefetch prefetcher(true, FMA_UNROLL);
     // 1MB
-    uint64_t nbytes = 40*1024;
+    uint64_t nbytes = 4*1024;
     auto* data = reinterpret_cast<uint8_t*>(aligned_alloc(4096, nbytes + 64 * DIS_SCHEDULE));
     auto *nbars =  reinterpret_cast<int*>(aligned_alloc(64, nbytes/64*sizeof(int)));
     auto *access_timing =  reinterpret_cast<double*>(aligned_alloc(64, nbytes/64*sizeof(double)));
@@ -198,6 +241,6 @@ void test_prefetch_nta() {
 }
 
 int main() {
-    test_prefetch_nta();
+    test_software_prefetch();
     return 0;
 }
