@@ -4,7 +4,6 @@ export CXX=icpx
 # to enable higher version of gcc (to compile torch extension)
 # https://stackoverflow.com/questions/61590926/how-to-install-gcc-g-9-on-centos-8-docker-centoslatest
 source /opt/rh/gcc-toolset-13/enable
-source /home/tingqian/tingqian/venv/bin/activate
 
 if ! which icpx > /dev/null; then
 # source oneapi & try again
@@ -43,10 +42,10 @@ function build() {
     echo main.s is generated &&
     echo debug.out is generated &&
     echo ======== test begin========== &&
-    echo numactl  -N1 --localalloc -C56 ./$target &&
-    CLFLUSH=1 numactl -N1 --localalloc -C56 ./$target
+    echo numactl  -N0 --localalloc -C55 ./$target &&
+    CLFLUSH=1 numactl -N0 --localalloc -C55 ./$target
 }
 
 function run1() {
-    CLFLUSH=0 numactl --localalloc -C56 $1
+    CLFLUSH=0 numactl -N0 --localalloc -C55 $1
 }
