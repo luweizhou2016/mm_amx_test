@@ -42,6 +42,12 @@ sudo ./mlc --idle_latency -b1024k -c0 -t10  // 2M /2k =1024, so only 1/1024 is L
 
 L1 hit is 1.3 ns, L2 hit is 4.1 ns. the diff is 2.8 ns. So diff is almost same with above.
 
+Double check the overhead of timmer:
+
+1. mlc --idle_latency -b1024m -c0 -t20 , read mostly from DDR is about 109ns
+2. disable prefetcher in this code  and hw prefetch, latency is about 120-130. So it means there are about 20-30 ns overhead to calculate the timing.
+
+
 
 Remaining: the first 3-4 access would have big latency,software prefetcher pipeline warm up?? not sure.
 
@@ -210,12 +216,12 @@ void test_software_prefetch() {
     _mm_mfence();
 
     for (int cache_line = 0; cache_line < DIS_SCHEDULE; cache_line ++) {
-        prefetcher(data + cache_line*64);
+        // prefetcher(data + cache_line*64);
     }
 
     // clear cache by memset & load
     for(int cache_line = 0; cache_line < nbytes/64; cache_line ++) {
-        prefetcher(data + (cache_line + DIS_SCHEDULE)*64);
+        // prefetcher(data + (cache_line + DIS_SCHEDULE)*64);
         auto access_time = measure_access(data + cache_line*64);
         tsc = tsc2second(access_time);
 
