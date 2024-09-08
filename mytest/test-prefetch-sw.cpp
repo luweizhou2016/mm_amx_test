@@ -47,9 +47,10 @@ Double check the overhead of timmer:
 1. mlc --idle_latency -b1024m -c0 -t20 , read mostly from DDR is about 109ns
 2. disable prefetcher in this code  and hw prefetch, latency is about 120-130. So it means there are about 20-30 ns overhead to calculate the timing.
 
-update:
+update after409513fbbf35cf2f0cf3ce9c5495a28b86bda8d3:
 
-After remvonig
+After remving the mfence() and replacing mfence() with lfence() to ensure loading is done. NTA and T2 seems can achieve about 10ns. 
+Almost same. so NTA and T2 diff can't be verified in this test.
 
 Remaining: the first 3-4 access would have big latency,software prefetcher pipeline warm up?? not sure.
 
