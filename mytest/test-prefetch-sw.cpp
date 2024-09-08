@@ -47,7 +47,9 @@ Double check the overhead of timmer:
 1. mlc --idle_latency -b1024m -c0 -t20 , read mostly from DDR is about 109ns
 2. disable prefetcher in this code  and hw prefetch, latency is about 120-130. So it means there are about 20-30 ns overhead to calculate the timing.
 
+update:
 
+After remvonig
 
 Remaining: the first 3-4 access would have big latency,software prefetcher pipeline warm up?? not sure.
 
@@ -112,12 +114,11 @@ class MeasureAccess : public jit_generator {
     sal(rdx, 32);
     or_(rax, rdx); // 64bit
     mov(reg_tsc_0, rax);
-
-    mfence();
+    //mfence();
 
     // dummy access
     vmovups(zmm0, ptr[reg_addr]);
-    mfence();
+    lfence();
 
     // delta tsc
     rdtsc(); // EDX:EAX
@@ -193,7 +194,7 @@ class AccessLoad : public jit_generator {
 
 //The prefetch distacne needs to be tuned based on programing loop latency.
 #define DIS_SCHEDULE 3
-#define FMA_UNROLL 20
+#define FMA_UNROLL 80
 
 void test_software_prefetch() {
     MeasureAccess measure_access;
@@ -216,12 +217,12 @@ void test_software_prefetch() {
     _mm_mfence();
 
     for (int cache_line = 0; cache_line < DIS_SCHEDULE; cache_line ++) {
-        // prefetcher(data + cache_line*64);
+        prefetcher(data + cache_line*64);
     }
 
     // clear cache by memset & load
     for(int cache_line = 0; cache_line < nbytes/64; cache_line ++) {
-        // prefetcher(data + (cache_line + DIS_SCHEDULE)*64);
+        prefetcher(data + (cache_line + DIS_SCHEDULE)*64);
         auto access_time = measure_access(data + cache_line*64);
         tsc = tsc2second(access_time);
 
