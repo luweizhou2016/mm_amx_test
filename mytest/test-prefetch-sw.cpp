@@ -29,8 +29,8 @@ file:///C:/Users/luweizho/Downloads/325462-sdm-vol-1-2abcd-3abcd-4.pdf
 Apply sw prefetcher after disabling hw prefetcher, find the prefetchnta and perfetcht2 latency has minor difference when access size < L1 ,
 t2 value is longer than nta as expected but in unexpected percentange (less than 10%). sample one time would has too much software overhead.
 
-prefetchnta:  25ns for L1 hit
-prefetcht2:  27ns for L2 hit
+prefetchnta:  20ns for L1 hit
+prefetcht2:  22ns for L2 hit
 
 diff is about 2ns
 
@@ -40,17 +40,13 @@ sudo ./mlc --idle_latency -b2k -c0 -t10  //2k < 32 K so L1 cache hit.
 
 sudo ./mlc --idle_latency -b1024k -c0 -t10  // 2M /2k =1024, so only 1/1024 is L1 hit,  almost L2 hit.
 
-L1 hit is 1.3 ns, L2 hit is 4.1 ns. the diff is 2.8 ns. So diff is almost same with above.
+L1 hit is 1.3 ns, L2 hit is 4.1 ns. the diff is 2.8 ns. So diff is almost same with above. L3 is 40ns
 
 Double check the overhead of timmer:
 
 1. mlc --idle_latency -b1024m -c0 -t20 , read mostly from DDR is about 109ns
 2. disable prefetcher in this code  and hw prefetch, latency is about 120-130. So it means there are about 20-30 ns overhead to calculate the timing.
 
-update after409513fbbf35cf2f0cf3ce9c5495a28b86bda8d3:
-
-After remving the mfence() and replacing mfence() with lfence() to ensure loading is done. NTA and T2 seems can achieve about 10ns. 
-Almost same. so NTA and T2 diff can't be verified in this test.
 
 Remaining: the first 3-4 access would have big latency,software prefetcher pipeline warm up?? not sure.
 
@@ -115,7 +111,7 @@ class MeasureAccess : public jit_generator {
     sal(rdx, 32);
     or_(rax, rdx); // 64bit
     mov(reg_tsc_0, rax);
-    //mfence();
+    mfence();
 
     // dummy access
     vmovups(zmm0, ptr[reg_addr]);
@@ -126,6 +122,7 @@ class MeasureAccess : public jit_generator {
     sal(rdx, 32);
     or_(rax, rdx); // 64bit
     sub(rax, reg_tsc_0);
+    mfence();
 
     ret();
   }
@@ -142,8 +139,8 @@ class Prefetch : public jit_generator {
 
   void generate() {
     if (via_prefetch) {
-        // prefetchnta(ptr[reg_addr]);
-        prefetcht2(ptr[reg_addr]);
+        prefetchnta(ptr[reg_addr]);
+        // prefetcht2(ptr[reg_addr]);
 
         for (uint32_t i = 0; i < unroll_loop; i++) {
             vfmadd231ps(Vmm(0), Vmm(1), Vmm(2));
