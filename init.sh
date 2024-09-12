@@ -43,7 +43,7 @@ function build() {
     echo debug.out is generated &&
     echo ======== test begin========== &&
     echo numactl  -N0 --localalloc -C55 ./$target &&
-    CLFLUSH=1 numactl -N0 --localalloc -C55 ./$target
+    sudo CLFLUSH=1 numactl -N0 --localalloc -C 55 ./$target
 }
 
 function run1() {

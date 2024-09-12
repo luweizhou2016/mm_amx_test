@@ -1,6 +1,21 @@
 /*
 
- https://abertschi.ch/blog/2022/prefetching/
+Summary: Test needs to run after disabling prefetch and with sudo to check physical address.
+
+L2/L1 cache line on SPR is physically indexed based on test_cache_conflict.cpp test result.
+ **virtual address from malloc()/alignmalloc() on SPR can't ensure virtual addresshas same set index with physical address**. 
+Using **mmap() with huge page** can get physical contineous address within 2MB. So on SPR, L2 size is 2MB, so it means when allocating 2MB with mmap() hugepage, we can ensure these memory would introcue
+L2 cache line conflict.
+
+
+The test read data (size is 0.5 -0.75 * l2_size )into cache(at least L2), and probe cache line latency based on stride.
+Based on latency data, we can conclude whether  the cache line conflict exist. 
+
+When using malloc, we can see cache line conflict is easy to reproduce even using half of cache, which is caused physical address L2 cache index conflict
+from the log.
+
+
+https://stackoverflow.com/questions/5748492/is-there-any-api-for-determining-the-physical-address-from-virtual-address-in-li
 
 */
 
@@ -119,54 +134,10 @@ timeit timer({
     //{PERF_TYPE_RAW, 0x02b1, "UOPS_EXECUTED.CORE"},
 });
 
-
-class MemAccessPattern : public jit_generator {
- public:
-  std::vector<int> m_cache_lines;
-  bool m_is_write;
-  bool m_use_prefetch_nta;
-  MemAccessPattern(const std::vector<int>& cache_lines, bool is_write, bool use_prefetch_nta) : m_cache_lines(cache_lines), m_is_write(is_write), m_use_prefetch_nta(use_prefetch_nta) {
-    create_kernel("MemAccessPattern");
-  }
-  // to save push/pop: do not use `abi_save_gpr_regs`
-  Xbyak::Reg64 reg_addr = abi_param1;
-  void generate() {
-    mfence();
-    if (!m_is_write) {
-        vpxorq(zmm0, zmm0, zmm0);
-        for(auto& i : m_cache_lines) {
-            if (m_use_prefetch_nta) {
-                // SW prefetch also triggers HW prefetch
-                //prefetchw(ptr[reg_addr + i*64]);
-                prefetcht2(ptr[reg_addr + i*64]); 
-                // prefetchnta(ptr[reg_addr + i*64]);
-                // prefetchwt1(ptr[reg_addr + i*64]);
-            } else {
-                //prefetchnta(ptr[reg_addr + i*64]);
-                vmovups(zmm1, ptr[reg_addr + i*64]);
-                vaddps(zmm0, zmm0, zmm1);
-            }
-        }
-    } else {
-        // write
-        vpxorq(zmm0, zmm0, zmm0);
-        for(auto& i : m_cache_lines) {
-            if (m_use_prefetch_nta) {
-                prefetchnta(ptr[reg_addr + i*64]);
-            } else {
-                vmovups(ptr[reg_addr + i*64], zmm0);
-            }
-        }
-    }
-    mfence();
-    ret();
-  }
-};
-
 class MeasureAccess : public jit_generator {
  public:
   
-  MeasureAccess() {
+  MeasureAccess(bool readOnly = false) :  read_only(readOnly) {
     create_kernel("MeasureAccess");
   }
   // to save push/pop: do not use `abi_save_gpr_regs`
@@ -174,29 +145,32 @@ class MeasureAccess : public jit_generator {
   Xbyak::Reg64 reg_cycles = rax;
   Xbyak::Reg64 reg_tsc_0 = r9;
   Xbyak::Reg64 reg_dummy = r10;
+  bool read_only;
 
   void generate() {
 
     mfence();
+    if (!read_only) {
+        // reg_tsc_0
+        rdtsc(); // EDX:EAX
+        sal(rdx, 32);
+        or_(rax, rdx); // 64bit
+        mov(reg_tsc_0, rax);
 
-    // reg_tsc_0
-    rdtsc(); // EDX:EAX
-    sal(rdx, 32);
-    or_(rax, rdx); // 64bit
-    mov(reg_tsc_0, rax);
-
-    mfence();
+        mfence();
+    }
 
     // dummy access
     vmovups(zmm0, ptr[reg_addr]);
 
     mfence();
-
-    // delta tsc
-    rdtsc(); // EDX:EAX
-    sal(rdx, 32);
-    or_(rax, rdx); // 64bit
-    sub(rax, reg_tsc_0);
+    if (!read_only) {
+        // delta tsc
+        rdtsc(); // EDX:EAX
+        sal(rdx, 32);
+        or_(rax, rdx); // 64bit
+        sub(rax, reg_tsc_0);
+    }
 
     ret();
   }
@@ -208,6 +182,7 @@ void test_read_prefetch() {
     EnvVar CLSTRIDE("CLSTRIDE", 1);
     pid_t pid = getpid();
 
+    MeasureAccess read_access(true);
     MeasureAccess measure_access;
     MSRConfig _msr1;
     size_t cache_line_sz = 64;
@@ -221,30 +196,18 @@ void test_read_prefetch() {
 
     constexpr static std::size_t huge_page_size = 1 << 21; // 2 MiB
 
-    uint64_t nbytes = cache_line_sz * l2_sets * 1;
-    std::vector<int> read_pattern(nbytes / access_stride, 0);
-    for (int i = 0; i < read_pattern.size(); i ++)
-        read_pattern[i] = access_stride/64 * i;
-    // MemAccessPattern mem_reads_writes(read_pattern, WRMEM, false);
-    void* p;
-    // printf("****pid is %d\n", pid);
-    // getchar();
-    // posix_memalign(&p, huge_page_size, nbytes);
+    uint64_t nbytes = cache_line_sz * l2_sets * 8;
+    // void* p;
+    // posix_memalign(&p, 64, nbytes);  //posix_memalign(&p, huge_page_size, nbytes); seems can also allocate physical contineous pages sometimes.??
     // auto* data = reinterpret_cast<uint8_t*>(p);
-    // auto* data = reinterpret_cast<uint8_t*>(aligned_alloc(huge_page_size, nbytes));
-    // auto* data = reinterpret_cast<uint8_t*>(malloc(nbytes + 4*1024*1024));
 
-    auto* data = reinterpret_cast<uint8_t*>(mmap(NULL, 8 * (1 << 21), PROT_READ | PROT_WRITE,
+    auto* data = reinterpret_cast<uint8_t*>(mmap(NULL, 8 * huge_page_size, PROT_READ | PROT_WRITE,
                  MAP_PRIVATE | MAP_ANONYMOUS | MAP_HUGETLB,
                  -1, 0));
-    
-    for(int i = 0; i < 8 * (1 << 21); i++) data[i] = i;
+    memset(data, 1, nbytes);
     std::vector<int64_t> access_times(nbytes/64, 0);
 
     const int repeats = 3;
-
-    int64_t sum = 0;
-
     _mm_mfence();
     for(int r = 0; r < repeats; r ++) {
 
@@ -252,26 +215,26 @@ void test_read_prefetch() {
             _mm_clflush(data + i);
         }
         _mm_mfence();
-        size_t sum = 0;
+        size_t sum =0;
         for(int cache_line = 0; cache_line < access_times.size();  cache_line += access_stride/64) {
-            // check which elements have been prefetched
-            sum += measure_access(data + cache_line*64);
+            // Read access to cached data into at least L2
+            read_access(data + cache_line*64);
         }
         _mm_mfence();
-        // mem_reads_writes(data);
         for(int cache_line = 0; cache_line < access_times.size();  cache_line += access_stride/64) {
             access_times[cache_line] += measure_access(data + cache_line*64);
-
         }
     }
 
     {
+        //Calculate consumption times  on every cache line set.
         uintptr_t vaddr, paddr = 0;
         vaddr = (uintptr_t)data;
         for(int cache_line = 0; cache_line < access_times.size(); cache_line += access_stride/64) {
             if (virt_to_phys_user(&paddr, pid, vaddr)) {
                 fprintf(stderr, "error: virt_to_phys_user\n");
             };
+            // L2 is 0x800, L1 is 0x40 on SPR.
             size_t l2_set_idx = (paddr >> 6) & 0x7ff;
             size_t l1_set_idx = (paddr >> 6) & 0x3f;            
             l2_cache_set[l2_set_idx] = l2_cache_set[l2_set_idx] + 1;
@@ -289,9 +252,9 @@ void test_read_prefetch() {
         };
         // https://en.wikipedia.org/wiki/ANSI_escape_code#3-bit_and_4-bit
         const char * fg_color = "90";
-        if (std::find(read_pattern.begin(), read_pattern.end(), cache_line) != read_pattern.end()) {
-            fg_color = "32";
-        }
+        // if (std::find(read_pattern.begin(), read_pattern.end(), cache_line) != read_pattern.end()) {
+        //     fg_color = "32";
+        // }
         auto nbars = static_cast<int>(tsc2second(access_times[cache_line]/repeats)*1e9 * 100/256);
         std::string progress_bar;
         // https://github.com/Changaco/unicode-progress-bars/blob/master/generator.html
@@ -309,6 +272,7 @@ void test_read_prefetch() {
         vaddr +=access_stride;
     }
     munmap(data,8 * (1 << 21));
+    // free(data);
 }
 
 int main() {
