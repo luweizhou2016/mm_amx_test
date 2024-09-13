@@ -26,13 +26,18 @@ MSR offset address is in IA64_software_dev_manual 2.17, volume 4
 
 file:///C:/Users/luweizho/Downloads/325462-sdm-vol-1-2abcd-3abcd-4.pdf
 
-Apply sw prefetcher after disabling hw prefetcher, find the prefetchnta and perfetcht2 latency has minor difference when access size < L1 ,
-t2 value is longer than nta as expected but in unexpected percentange (less than 10%). sample one time would has too much software overhead.
+Apply sw prefetcher after disabling hw prefetcher, manually enalbe sw prefetcher would have some overhead in the first 3-6 cache line access.
 
-prefetchnta:  20ns for L1 hit
-prefetcht2:  22ns for L2 hit
+The following test data size is in L1, in L2 and out L2, but via prefetching in advance, we can ensure the data is prefetched into specified cache(L1 or L2) via difference prefetch ISAs.
 
-diff is about 2ns
+test :
+data size :1 kB, 2M, 4M
+prefetchnt0:  18-20ns for L1 hit
+prefetchnta:  18-20ns for L1 hit
+prefetcht1:  22-24ns for L2 hit
+prefetcht2:  22-24ns for L2 hit
+
+diff is about 2ns for L1 and L2 access.
 
 but the software overhead timing should be same for nta and t2. So let us check the diff between L1 and L2 with mlc tool
 
@@ -42,13 +47,13 @@ sudo ./mlc --idle_latency -b1024k -c0 -t10  // 2M /2k =1024, so only 1/1024 is L
 
 L1 hit is 1.3 ns, L2 hit is 4.1 ns. the diff is 2.8 ns. So diff is almost same with above. L3 is 40ns
 
-Double check the overhead of timmer:
+Double check the overhead of timmer??
 
 1. mlc --idle_latency -b1024m -c0 -t20 , read mostly from DDR is about 109ns
 2. disable prefetcher in this code  and hw prefetch, latency is about 120-130. So it means there are about 20-30 ns overhead to calculate the timing.
 
 
-Remaining: the first 3-4 access would have big latency,software prefetcher pipeline warm up?? not sure.
+Remaining: the first 3-6 access would have big latency,software prefetcher pipeline warm up?? not sure.
 
 */
 #ifdef _WIN32
@@ -139,8 +144,9 @@ class Prefetch : public jit_generator {
 
   void generate() {
     if (via_prefetch) {
-        prefetchnta(ptr[reg_addr]);
-        // prefetcht2(ptr[reg_addr]);
+        // prefetchnta(ptr[reg_addr]);
+        // prefetcht0(ptr[reg_addr]);
+        prefetcht1(ptr[reg_addr]);
 
         for (uint32_t i = 0; i < unroll_loop; i++) {
             vfmadd231ps(Vmm(0), Vmm(1), Vmm(2));
@@ -198,8 +204,11 @@ void test_software_prefetch() {
     MeasureAccess measure_access;
     Prefetch prefetcher(true, FMA_UNROLL);
     // 1MB
-    uint64_t nbytes = 4*1024;
-    auto* data = reinterpret_cast<uint8_t*>(aligned_alloc(4096, nbytes + 64 * DIS_SCHEDULE));
+    uint64_t nbytes = 4 * 1024 * 1024;
+    // Allocate 8 * 2M
+    auto* data = reinterpret_cast<uint8_t*>(mmap(NULL, 8 * 1 << 21, PROT_READ | PROT_WRITE,
+                 MAP_PRIVATE | MAP_ANONYMOUS | MAP_HUGETLB,
+                 -1, 0));    // auto* data = reinterpret_cast<uint8_t*>(p);
     auto *nbars =  reinterpret_cast<int*>(aligned_alloc(64, nbytes/64*sizeof(int)));
     auto *access_timing =  reinterpret_cast<double*>(aligned_alloc(64, nbytes/64*sizeof(double)));
     double tsc = 0.0;
@@ -242,7 +251,7 @@ void test_software_prefetch() {
     }
     ::free(access_timing);
     ::free(nbars);
-    ::free(data);
+    munmap(data, 8*1<<21);
 }
 
 int main() {
