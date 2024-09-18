@@ -28,21 +28,20 @@ operations. The L2 Streamer can also be triggered by DPL requests for L2 cache m
 Unused data prefech(both hw prefecher or sw prefech) would cause cache polution. prefetchnta command can be used to minimize this kind of 
 cache pollustion caused by hw prefecher or sw prefech
 
-Summary:
+Test Result Summary:
 
 1. When using prefetchnta() hint to  prefetch pattern data, the pattern data would be prefeched into a place close to processor(L1),  minimizing cache pollution.
-   prefetchnta() command  can minimize the cache pollution when hwprefetch is enabled. once the cache line is prefetched via software prefetchnta(). The cache line is non-temproal, 
-    prefetcher would by pass L2 prefecher.  The subsequent cache line forward/backward access pattern would not be prefetched.
+   prefetchnta() command  can minimize the cache pollution when hwprefetch is enabled. once the cache line is prefetched via software prefetchnta(). The data is non-temproal, 
+   prefetcher would by pass L2 prefecher.  Seems when prefetchnta() hint, prefetcher would NOT enable the access/prefetch pattern detection or further detection prediction.
+   so it means software invocation prefetchnta() can accurately control the prefetcher behavior. 
 
 2. confirm the prefecher can't across linux page. Linux page is 4K address aligned. When access pattern(not using prefetchnta) is at the end page, hw prefetcher would prefetcher backward within the page, not across the page.
 
 3. When we want to prefetch data in accurate domain(such as reading/writing tensor in parallel multiple cores, we don't one core to prefetch data which should be access by other cores),
     based on prefetchnta(), we can use "prefetchnta()" to accurately prefetch data into L1 in the core access boundary.
 
-4. HW prefetching automically would be tiggered by cache miss on L1 or L2.  After using NTA hint to prefech the cache line A, 
-    the following reading/writing cache A would be a cache hit even cacheline A hasn't been installed into L1. So the reading/writing on still prefetching cache line would not trigger hw prefech automitically..
-   That is why using NTA hint prefetch before access A would not trigger prefeching  
-
+4. HW prefetching automically would be tiggered by cache miss on L1 or L2.  After prefetching the cache line A, 
+    the following reading/writing cache A would be a cache hit even cacheline A hasn't been installed into L1 in my understanding
 
 */
 
@@ -353,7 +352,8 @@ int main() {
     // test: hw prefetcher pattern and hw prefetch would not cross page boundary.
     test_prefetch_within_page();
     printf("---------------------------------------test_prefetch_nta---------------\n");
-    // test: sw prefetcher with NTA hint before reading/writing read-pattern would not trigger cache miss. The subsequesnt cache line after the pattern would not prefetched automatically.
+    // test: sw prefetcher with NTA hint before reading/writing read-pattern would not trigger cache miss. 
+    // The subsequesnt cache line after the pattern would not prefetched automatically.
     test_prefetch_nta();
     return 0;
 }
