@@ -69,6 +69,9 @@ Remaining: the first 3-6 access would have big latency,software prefetcher pipel
 
 #include "jit.hpp"
 
+#define ALLOC_VIA_MMAP 1
+
+
 timeit timer({
     //{PERF_TYPE_HARDWARE, PERF_COUNT_HW_CPU_CYCLES, "HW_CYCLES"},
     //{PERF_TYPE_RAW, 0x3c, "CPU_CLK_UNHALTED.THREAD"},
@@ -166,35 +169,6 @@ class Prefetch : public jit_generator {
   bool via_prefetch;
 };
 
-// void spin_wait(double seconds){
-//     auto wait_tsc = second2tsc(seconds);
-//     auto t0 = __rdtsc();
-//     while(__rdtsc() - t0 < wait_tsc);
-// }
-
-// void wait(){
-//         auto wait_tsc = second2tsc(1e-5);
-//         auto t0 = __rdtsc();
-//         while(__rdtsc() - t0 < wait_tsc);
-// };
-
-
-class AccessLoad : public jit_generator {
- public:
-  AccessLoad() {
-    create_kernel("AccessLoad");
-  }
-  // to save push/pop: do not use `abi_save_gpr_regs`
-  Xbyak::Reg64 reg_addr = abi_param1;
-  void generate() {
-    mfence();
-    vpxorq(zmm0, zmm0, zmm0);
-    vmovups(zmm1, ptr[reg_addr]);
-    vaddps(zmm0, zmm0, zmm1);
-    mfence();
-    ret();
-  }
-};
 
 //The prefetch distacne needs to be tuned based on programing loop latency.
 #define DIS_SCHEDULE 3
@@ -203,12 +177,18 @@ class AccessLoad : public jit_generator {
 void test_software_prefetch() {
     MeasureAccess measure_access;
     Prefetch prefetcher(true, FMA_UNROLL);
-    // 1MB
-    uint64_t nbytes = 4 * 1024 * 1024;
+    // 1MB. Half L2 size on SPR.
+    uint64_t nbytes = 512 * 1024;
+#if ALLOC_VIA_MMAP
     // Allocate 8 * 2M
     auto* data = reinterpret_cast<uint8_t*>(mmap(NULL, 8 * 1 << 21, PROT_READ | PROT_WRITE,
                  MAP_PRIVATE | MAP_ANONYMOUS | MAP_HUGETLB,
-                 -1, 0));    // auto* data = reinterpret_cast<uint8_t*>(p);
+                 -1, 0));
+#else
+    auto*p = reinterpret_cast<int*>(aligned_alloc(64, nbytes));
+    auto* data = reinterpret_cast<uint8_t*>(p);
+#endif
+
     auto *nbars =  reinterpret_cast<int*>(aligned_alloc(64, nbytes/64*sizeof(int)));
     auto *access_timing =  reinterpret_cast<double*>(aligned_alloc(64, nbytes/64*sizeof(double)));
     double tsc = 0.0;
@@ -251,10 +231,15 @@ void test_software_prefetch() {
     }
     ::free(access_timing);
     ::free(nbars);
+#if ALLOC_VIA_MMAP
     munmap(data, 8*1<<21);
+#else
+    free(data);
+#endif
 }
 
-int main() {
+int main(int args_n, char** args_list) {
+
     test_software_prefetch();
     return 0;
 }

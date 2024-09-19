@@ -117,8 +117,8 @@ class jit_generator : public Xbyak::CodeGenerator {
 
  public:
   template <typename... kernel_args_t>
-  int operator()(kernel_args_t... args) const {
-    using jit_kernel_func_t = int (*)(const kernel_args_t... args);
+  uint64_t operator()(kernel_args_t... args) const {
+    using jit_kernel_func_t = uint64_t (*)(const kernel_args_t... args);
     auto* fptr = (jit_kernel_func_t)jit_ker_;
 #ifdef JIT_DEBUG
     if (!jit_debug().empty()) {
