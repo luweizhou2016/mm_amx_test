@@ -65,7 +65,7 @@ class jit_generator : public Xbyak::CodeGenerator {
     return v.v_str;
   }
 
-  jit_generator() : Xbyak::CodeGenerator(Xbyak::DEFAULT_MAX_CODE_SIZE*4, (void*)0) {
+  jit_generator() : Xbyak::CodeGenerator(Xbyak::DEFAULT_MAX_CODE_SIZE*6, (void*)0) {
   }
 
  protected:

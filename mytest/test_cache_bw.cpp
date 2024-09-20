@@ -1,17 +1,26 @@
 /*
 
-*/
+Summary: contineous physical memory seems to have almost same performance with malloc with aligned 64 bytes. 
 
-/*
 
-Summary:
+[READ CACHE BW] :  1024 KB  99.915642 Byte/Cycle
+[READ CACHE BW] : 20480 KB  13.302236 Byte/Cycle
+[READ CACHE BW] :    10 KB  181.351273 Byte/Cycle
+[WRITE CACHE BW] :  1024 KB  31.369221 Byte/Cycle
+[WRITE CACHE BW] : 20480 KB  8.585435 Byte/Cycle
+[WRITE CACHE BW] :    10 KB  105.450256 Byte/Cycle
 
-[CACHE JIT READ BW TEST] :  1024 KB read BW 105.917641 Byte/Cycle
-[CACHE SUM READ BW TEST] :  1024 KB read BW 68.070602 Byte/Cycle
-[CACHE JIT READ BW TEST] : 20480 KB read BW 13.528506 Byte/Cycle
-[CACHE SUM READ BW TEST] : 20480 KB read BW 13.761051 Byte/Cycle
-[CACHE JIT READ BW TEST] :    10 KB read BW 182.145477 Byte/Cycle
-[CACHE SUM READ BW TEST] :    10 KB read BW 62.038120 Byte/Cycle
+MMAP physical contineous memory:
+READ CACHE BW] :  1024 KB  100.574318 Byte/Cycle
+[READ CACHE BW] : 20480 KB  13.301422 Byte/Cycle
+[READ CACHE BW] :    10 KB  180.907867 Byte/Cycle
+[WRITE CACHE BW] :  1024 KB  31.534115 Byte/Cycle
+[WRITE CACHE BW] : 20480 KB  8.757294 Byte/Cycle
+[WRITE CACHE BW] :    10 KB  105.984833 Byte/Cycle
+
+
+Access latency: Physical contineous memory would have lower access latency because of avoiding cache conflicts. 
+Access BW: same bandwidth between physical contineous memory and malloc.
 
 */
 #ifdef _WIN32
@@ -58,7 +67,7 @@ timeit timer({
 class MeasureBW : public jit_generator {
  public:
   
-  MeasureBW(size_t cl_size): cacheline_size(cl_size)  {
+  MeasureBW(size_t cl_size, bool store_test = false): cacheline_size(cl_size), store(store_test) {
     create_kernel("MeasureBW");
   }
 
@@ -68,16 +77,23 @@ class MeasureBW : public jit_generator {
   Xbyak::Reg64 reg_repeat = abi_param2;    //RSI
   Xbyak::Reg64 reg_loop = abi_param4;     //RCX
   Xbyak::Reg64 reg_addr_bak = abi_param5; //R8
+  Xbyak::Reg64 reg_store = r10; //R8
 
-  Xbyak::Reg64 reg_tsc_0 = r11;
+  Xbyak::Reg64 reg_tsc_0 = r11; //r11
 
   size_t cacheline_size;
-  size_t unroll_max_cl = 1024;
+  size_t unroll_max_cl = 500;
+  bool store;
 
   void generate() {
-    Xbyak::Label loop_over_steps;
-    Xbyak::Label outerloop;
+    Xbyak::Label repeat_loop;
+    Xbyak::Label loop_unroll;
     mov(reg_addr_bak, reg_addr);
+    //Set the store value.
+    //The value can be used to check whether loop works properly.
+    mov(reg_store, 0x0202020202020202);
+    auto zmm0 = Xbyak::Zmm(0);
+    vpbroadcastq(zmm0, reg_store);
 
     mfence();
     lfence();
@@ -92,35 +108,43 @@ class MeasureBW : public jit_generator {
     mfence();
 
     align(64, false);
-    L(loop_over_steps);
-    size_t outer_loop = cacheline_size / unroll_max_cl;
+    L(repeat_loop);
+    size_t loop = cacheline_size / unroll_max_cl;
     size_t tail =  cacheline_size % unroll_max_cl;
-    if (outer_loop) {
-        mov(reg_loop, outer_loop);
-        L(outerloop);
+    if (loop) {
+        mov(reg_loop, loop);
+        L(loop_unroll);
         for (auto i = 0 ; i < unroll_max_cl; i ++){
-        // dummy access
-            Xbyak::Zmm zmmload  = Xbyak::Zmm(i % 32);
-            vmovups(zmmload, ptr[reg_addr + i * 64]);
+            if (store) {
+                // vmovups(zmm, ptr[reg_addr + i * 64]);
+                // vpsllw(zmm, zmm, 1);
+                vmovups(ptr[reg_addr + i * 64], zmm0);
+            } else {
+                Xbyak::Zmm zmm = Xbyak::Zmm(i % 32);
+                vmovups(zmm, ptr[reg_addr + i * 64]);
+            }
         }
         mfence();
         add(reg_addr,  64*unroll_max_cl);
         dec(reg_loop);
-        jnz(outerloop, T_NEAR);
+        jnz(loop_unroll, T_NEAR);
     }
     if (tail) {
-        for (auto i = 0 ; i < tail; i ++){
-            Xbyak::Zmm zmmload  = Xbyak::Zmm(i % 32);
-            vmovups(zmmload, ptr[reg_addr + i * 64]);
+        for (auto i = 0 ; i < tail; i ++) {
+            Xbyak::Zmm zmm  = Xbyak::Zmm(i % 32);
+            if (store) {
+                vmovups(ptr[reg_addr + i * 64], zmm0);
+            } else {
+                vmovups(zmm, ptr[reg_addr + i * 64]);
+            }
 
         }
         mfence();
-
     }
 
     dec(reg_repeat);
     mov(reg_addr, reg_addr_bak);
-    jnz(loop_over_steps, T_NEAR);
+    jnz(repeat_loop, T_NEAR);
 
     mfence();
     lfence();
@@ -171,11 +195,10 @@ class Prefetch : public jit_generator {
   bool via_prefetch;
 };
 
-void test_cache_bandwidth(size_t nbytes, size_t repeat) {
-
+void test_cache_bandwidth(size_t cl_num, size_t repeat, bool test_store=false) {
     Prefetch prefetcher(false, 3);
-    size_t access_cl_num = nbytes/64;
-    MeasureBW measure_bw(access_cl_num);
+    size_t nbytes = cl_num *64;
+    MeasureBW measure_bw(cl_num, test_store);
 #if ALLOC_VIA_MMAP
     //Allocate 32M huge pages.
     auto* data = reinterpret_cast<uint8_t*>(mmap(NULL, 32 * 1 << 21, PROT_READ | PROT_WRITE,
@@ -187,7 +210,8 @@ void test_cache_bandwidth(size_t nbytes, size_t repeat) {
     auto* data = reinterpret_cast<uint8_t*>(p);
 #endif
     double tsc = 0.0;
-    for(int i = 0; i < nbytes; i++) data[i] = 1;
+    // initialize data value
+    for(int i = 0; i < nbytes; i++) data[i] = 255;
 
     for(int cache_line = 0; cache_line < nbytes/64 ; cache_line ++) {
         _mm_clflush(data + cache_line*64);
@@ -195,6 +219,7 @@ void test_cache_bandwidth(size_t nbytes, size_t repeat) {
     _mm_mfence();
 
     for (int cache_line = 0; cache_line < nbytes/64; cache_line ++) {
+        //prefetch cache line via loading
         prefetcher(data + cache_line*64);
     }
     _mm_mfence();
@@ -203,31 +228,17 @@ void test_cache_bandwidth(size_t nbytes, size_t repeat) {
     uint64_t timing = measure_bw(data, repeat);
     uint64_t cnt1 = _rdtsc();
     float diff_perc = (float)(cnt1 - cnt0 - timing) / (float)timing;
-
+    //Ensure rdtsc works in JIT code.
     assert(abs(diff_perc) <  0.001);
+    if (test_store) {
+        for (int i = 0; i < nbytes; i ++) {
+            //Ensure all cachelines can be stored. JIT code logic is ok.
+            assert(data[i] == 2);
+        }
+    }
 
-    printf("[CACHE JIT READ BW TEST] : %5lu KB read BW %3f Byte/Cycle\n", nbytes/1024, (float)(access_cl_num*64*repeat)/(float)(timing));
-    // uint64_t sum = 0;
-    //  _mm_mfence();
+    printf("[%s CACHE BW] : %5lu KB  %3f Byte/Cycle\n", test_store ? "WRITE": "READ", nbytes/1024, (float)(cl_num*64*repeat)/(float)(timing));
 
-    // for (int cache_line = 0; cache_line < nbytes/64; cache_line ++) {
-    //     prefetcher(data + cache_line*64);
-    // }
-    // _mm_mfence();
-
-    // _mm_mfence();
-    // cnt0 = _rdtsc();
-    // uint64_t* data_qw = (uint64_t*)(data);
-    // for (auto i = 0; i < repeat; i ++) {
-    //     for (size_t idx = 0; idx < nbytes / 8; idx++) {
-    //        sum += data_qw[idx];
-    //     }
-    // }
-    // _mm_mfence();
-    // cnt1 = _rdtsc();
-    // assert(sum!=0);
-
-    // printf("[CACHE SUM READ BW TEST] : %5lu KB read BW %3f Byte/Cycle\n", nbytes/1024, (float)(access_cl_num*64*repeat)/(float)(cnt1-cnt0));
 #if ALLOC_VIA_MMAP
     munmap(data, 8*1<<21);
 #else
@@ -235,10 +246,16 @@ void test_cache_bandwidth(size_t nbytes, size_t repeat) {
 #endif
 }
 
-int main(int args_n, char** args_list) {
-    test_cache_bandwidth(2*1024*1024/2, 20000);
-    test_cache_bandwidth(20*1024*1024, 2000);
-    test_cache_bandwidth(10*1024, 10000);
+//Enusre the cache line would be in L1, L2, L3 .
+static std::vector<std::tuple<size_t, size_t>> access_cl = {{10*1024/64, 10000},{(1<<20)/64, 20000}, {(20*1<<20)/64, 2000}};
 
-    return 0;
+int main(int args_n, char** args_list) {
+    // test read bandwidth
+    for (auto cl : access_cl) {
+        test_cache_bandwidth(std::get<0>(cl), std::get<1>(cl), false);
+    }
+    //test write bandwidth
+    for (auto cl : access_cl) {
+        test_cache_bandwidth(std::get<0>(cl), std::get<1>(cl), true);
+    }
 }
