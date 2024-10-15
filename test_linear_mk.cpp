@@ -5,8 +5,6 @@
 #error NOT SUPPORTED
 #endif
 
-
-
 /*
 C = A @ B
 
@@ -17,137 +15,6 @@ A : [32, K]
 B : [K, 32] repacked
 C : [32, 32]
 */
-
-// class Linear32x32_AMX : public jit_generator {
-// public:
-//     int m_K;
-//     TileConfig m_tile_cfg;
-//     Linear32x32_AMX(int K) : m_K(K) {
-//         create_kernel("Linear32x32_AMX");
-//         m_tile_cfg.reset(1, 0,
-//                          {
-//                              {16, 64}, // C:0
-//                              {16, 64}, // C:1
-//                              {16, 64}, // C:2
-//                              {16, 64}, // C:3
-//                              {16, 64}, // A0:4
-//                              {16, 64}, // A1:5
-//                              {16, 64}, // B0:6
-//                              {16, 64}, // B1:7
-//                          });
-//     }
-
-//     const TileConfig& tile_config() { return m_tile_cfg; }
-
-//     // to save push/pop: do not use `abi_save_gpr_regs`
-//     Xbyak::Reg64 reg_A_addr = abi_param1;
-//     Xbyak::Reg64 reg_A_stride = abi_param2;
-//     Xbyak::Reg64 reg_B_addr = abi_param3;
-//     Xbyak::Reg64 reg_C_addr = abi_param4;
-//     Xbyak::Reg64 reg_C_stride = abi_param5;
-//     Xbyak::Reg64 reg_B_stride = r10;
-//     Xbyak::Reg64 reg_A1_addr = r11;
-//     Xbyak::Reg64 reg_ktiles = r9;
-
-//     Xbyak::Tmm tmmC00 = tmm0;
-//     Xbyak::Tmm tmmC10 = tmm1;
-//     Xbyak::Tmm tmmC01 = tmm2;
-//     Xbyak::Tmm tmmC11 = tmm3;
-//     Xbyak::Tmm tmmA0 = tmm4;
-//     Xbyak::Tmm tmmA1 = tmm5;
-//     Xbyak::Tmm tmmB0 = tmm6;
-//     Xbyak::Tmm tmmB1 = tmm7;
-
-//     void generate() {
-//         /*
-//                        B: 1x2 tiles
-//         A : 2x1 tiles  C: 2x2 tiles
-//         */
-//         Xbyak::Label loop_over_ktiles;
-//         lea(reg_A1_addr, ptr[reg_A_addr + reg_A_stride * 8]);
-//         lea(reg_A1_addr, ptr[reg_A1_addr + reg_A_stride * 8]);
-//         auto Ktiles = m_K / 32;
-//         assert(m_K % 32 == 0);
-//         mov(reg_B_stride, 64);
-//         tilezero(tmmC00);
-//         tilezero(tmmC01);
-//         tilezero(tmmC10);
-//         tilezero(tmmC11);
-//         mov(reg_ktiles, Ktiles);
-
-//         auto const_A_steps = 64;
-
-//         bool is_matrix_A_blocked = std::getenv("ABLK") != nullptr;
-//         if (is_matrix_A_blocked) {
-//             // if matrix is blocked in 16x32, ops/cycle 630=>700
-//             mov(reg_A_stride, 64);
-//             const_A_steps = 1024;
-//         }
-
-//         bool do_sw_prefetch = std::getenv("SWPF") != nullptr;
-
-//         align(64, false);
-//         L(loop_over_ktiles);
-//         // for (int k = 0; k < Ktiles; k++) {
-//         tileloadd(tmmA0, ptr[reg_A_addr + reg_A_stride]);
-//         if (is_matrix_A_blocked && do_sw_prefetch) {
-//             for (int i = 0; i < 1024; i += 64)
-//                 prefetcht0(ptr[reg_A_addr + 4096 + i]);
-//         }
-//         tileloadd(tmmB0, ptr[reg_B_addr + reg_B_stride]);
-//         if (do_sw_prefetch) {
-//             for (int i = 0; i < 1024; i += 64)
-//                 prefetcht0(ptr[reg_B_addr + 4096 + i]);
-//         }
-//         lea(reg_B_addr, ptr[reg_B_addr + 1024]);
-
-//         tdpbf16ps(tmmC00, tmmA0, tmmB0);
-
-//         tileloadd(tmmA1, ptr[reg_A1_addr + reg_A_stride]);
-//         if (is_matrix_A_blocked && do_sw_prefetch) {
-//             for (int i = 0; i < 1024; i += 64)
-//                 prefetcht0(ptr[reg_A1_addr + 4096 + i]);
-//         }
-
-//         tdpbf16ps(tmmC10, tmmA1, tmmB0);
-
-//         tileloadd(tmmB1, ptr[reg_B_addr + reg_B_stride]);
-//         if (do_sw_prefetch) {
-//             for (int i = 0; i < 1024; i += 64)
-//                 prefetcht0(ptr[reg_B_addr + 4096 + i]);
-//         }
-
-//         tdpbf16ps(tmmC01, tmmA0, tmmB1);
-//         tdpbf16ps(tmmC11, tmmA1, tmmB1);
-//         //}
-//         lea(reg_A_addr, ptr[reg_A_addr + const_A_steps]);
-//         lea(reg_A1_addr, ptr[reg_A1_addr + const_A_steps]);
-//         lea(reg_B_addr, ptr[reg_B_addr + 1024]);
-//         dec(reg_ktiles);
-//         jnz(loop_over_ktiles, T_NEAR);
-
-//         tilestored(ptr[reg_C_addr + reg_C_stride], tmmC00);
-//         tilestored(ptr[reg_C_addr + reg_C_stride + 64], tmmC01);
-//         lea(reg_C_addr, ptr[reg_C_addr + reg_C_stride * 8]);
-//         lea(reg_C_addr, ptr[reg_C_addr + reg_C_stride * 8]);
-//         tilestored(ptr[reg_C_addr + reg_C_stride], tmmC10);
-//         tilestored(ptr[reg_C_addr + reg_C_stride + 64], tmmC11);
-//         ret();
-//     }
-// };
-
-
-/*
-C = A @ B
-
-               B: 1x2 tiles
-A : 2x1 tiles  C: 2x2 tiles
-
-A : [32, K]
-B : [K, 32] repacked
-C : [32, 32]
-*/
-
 
 class Linear32x32_AMX : public jit_generator {
 public:
@@ -189,78 +56,83 @@ public:
     Xbyak::Tmm tmmB0 = tmm6;
     Xbyak::Tmm tmmB1 = tmm7;
 
-
     void generate() {
-        Xbyak::Label loop_k_tile;
+        /*
+                       B: 1x2 tiles
+        A : 2x1 tiles  C: 2x2 tiles
+        */
+        Xbyak::Label loop_over_ktiles;
+        lea(reg_A1_addr, ptr[reg_A_addr + reg_A_stride * 8]);
+        lea(reg_A1_addr, ptr[reg_A1_addr + reg_A_stride * 8]);
+        auto Ktiles = m_K / 32;
         assert(m_K % 32 == 0);
+        mov(reg_B_stride, 64);
         tilezero(tmmC00);
         tilezero(tmmC01);
         tilezero(tmmC10);
         tilezero(tmmC11);
-        mov(reg_B_stride, 64);
-        mov(reg_ktiles, m_K / 32);
-        const size_t step_a = 64;
-        const size_t step_b = 2048;
-        const size_t step_c = 64;
-        bool do_sw_prefetch = std::getenv("SWPF") != nullptr;   
-        align(64, false);
-        L(loop_k_tile);
-        if (do_sw_prefetch) {
-            for (auto cl = 0; cl < 16; cl++) {
-                auto cl_offset = 64 * cl;
-                prefetcht0(ptr[reg_A_addr + step_a + cl_offset]);
-            }
+        mov(reg_ktiles, Ktiles);
+
+        auto const_A_steps = 64;
+
+        bool is_matrix_A_blocked = std::getenv("ABLK") != nullptr;
+        if (is_matrix_A_blocked) {
+            // if matrix is blocked in 16x32, ops/cycle 630=>700
+            mov(reg_A_stride, 64);
+            const_A_steps = 1024;
         }
+
+        bool do_sw_prefetch = std::getenv("SWPF") != nullptr;
+
+        align(64, false);
+        L(loop_over_ktiles);
+        // for (int k = 0; k < Ktiles; k++) {
         tileloadd(tmmA0, ptr[reg_A_addr + reg_A_stride]);
+        if (is_matrix_A_blocked && do_sw_prefetch) {
+            for (int i = 0; i < 1024; i += 64)
+                prefetcht0(ptr[reg_A_addr + 4096 + i]);
+        }
         tileloadd(tmmB0, ptr[reg_B_addr + reg_B_stride]);
+        if (do_sw_prefetch) {
+            for (int i = 0; i < 1024; i += 64)
+                prefetcht0(ptr[reg_B_addr + 4096 + i]);
+        }
+        lea(reg_B_addr, ptr[reg_B_addr + 1024]);
+
         tdpbf16ps(tmmC00, tmmA0, tmmB0);
 
-        if (do_sw_prefetch) {
-            for (auto cl = 0; cl < 16; cl++) {
-                auto cl_offset = 64 * cl;
-                prefetcht0(ptr[reg_B_addr + step_b + cl_offset]);
-            }
+        tileloadd(tmmA1, ptr[reg_A1_addr + reg_A_stride]);
+        if (is_matrix_A_blocked && do_sw_prefetch) {
+            for (int i = 0; i < 1024; i += 64)
+                prefetcht0(ptr[reg_A1_addr + 4096 + i]);
         }
 
-        lea(reg_A1_addr, ptr[reg_A_addr + reg_A_stride * 8]);
-        lea(reg_A1_addr, ptr[reg_A1_addr + reg_A_stride * 8]);
-        if (do_sw_prefetch) {
-            for (auto cl = 0; cl < 16; cl++) {
-                auto cl_offset = 64 * cl;
-                prefetcht0(ptr[reg_A1_addr + step_a + cl_offset]);
-            }
-        }
-        tileloadd(tmmA1, ptr[reg_A1_addr + reg_A_stride]);
         tdpbf16ps(tmmC10, tmmA1, tmmB0);
 
+        tileloadd(tmmB1, ptr[reg_B_addr + reg_B_stride]);
         if (do_sw_prefetch) {
-            for (auto cl = 0; cl < 16; cl++) {
-                auto cl_offset = 64 * cl;
-                 prefetcht0(ptr[reg_B_addr + 1024 +  step_b + cl_offset]);
-            }
+            for (int i = 0; i < 1024; i += 64)
+                prefetcht0(ptr[reg_B_addr + 4096 + i]);
         }
-        tileloadd(tmmB1, ptr[reg_B_addr + reg_B_stride + 1024]);
+
         tdpbf16ps(tmmC01, tmmA0, tmmB1);
         tdpbf16ps(tmmC11, tmmA1, tmmB1);
-    
-        lea(reg_A_addr, ptr[reg_A_addr + step_a]);
-        lea(reg_B_addr, ptr[reg_B_addr + step_b]);
-
+        //}
+        lea(reg_A_addr, ptr[reg_A_addr + const_A_steps]);
+        lea(reg_A1_addr, ptr[reg_A1_addr + const_A_steps]);
+        lea(reg_B_addr, ptr[reg_B_addr + 1024]);
         dec(reg_ktiles);
-        jnz(loop_k_tile, T_NEAR);
-    
-        tilestored(ptr[reg_C_addr + reg_C_stride], tmmC00);
-        tilestored(ptr[reg_C_addr + reg_C_stride + step_c], tmmC01);
-        // lea(reg_C_addr, ptr[reg_C_addr + reg_C_stride * 16]);
-        lea(reg_C_addr, ptr[reg_C_addr + reg_C_stride * 8]);
-        lea(reg_C_addr, ptr[reg_C_addr + reg_C_stride * 8]);
+        jnz(loop_over_ktiles, T_NEAR);
 
+        tilestored(ptr[reg_C_addr + reg_C_stride], tmmC00);
+        tilestored(ptr[reg_C_addr + reg_C_stride + 64], tmmC01);
+        lea(reg_C_addr, ptr[reg_C_addr + reg_C_stride * 8]);
+        lea(reg_C_addr, ptr[reg_C_addr + reg_C_stride * 8]);
         tilestored(ptr[reg_C_addr + reg_C_stride], tmmC10);
-        tilestored(ptr[reg_C_addr + reg_C_stride + step_c], tmmC11);
+        tilestored(ptr[reg_C_addr + reg_C_stride + 64], tmmC11);
         ret();
     }
 };
-
 
 class Linear16x96_AMX : public jit_generator {
 public:
@@ -438,109 +310,6 @@ public:
     }
 };
 
-
-class Linear16x48_AMX : public jit_generator {
-public:
-    int m_K;
-    TileConfig m_tile_cfg;
-    Linear16x48_AMX(int K) : m_K(K) {
-        create_kernel("Linear16x48_AMX");
-        m_tile_cfg.reset(1, 0,
-                         {
-                             {16, 64}, // C:0
-                             {16, 64}, // C:1
-                             {16, 64}, // C:2
-                             {16, 64}, // A:0
-                             {16, 64}, // B:0
-                             {16, 64}, // B:1
-                             {16, 64}, // B:2
-                             {0, 0}, // not used
-                         });
-    }
-
-    const TileConfig& tile_config() { return m_tile_cfg; }
-
-    // to save push/pop: do not use `abi_save_gpr_regs`
-    Xbyak::Reg64 reg_A_addr = abi_param1;
-    Xbyak::Reg64 reg_A_stride = abi_param2;
-    Xbyak::Reg64 reg_B_addr = abi_param3;
-    Xbyak::Reg64 reg_C_addr = abi_param4;
-    Xbyak::Reg64 reg_C_stride = abi_param5;
-    Xbyak::Reg64 reg_B_stride = r10;
-    Xbyak::Reg64 reg_ktiles = r9;
-
-    Xbyak::Tmm tmmC0 = tmm0;
-    Xbyak::Tmm tmmC1 = tmm1;
-    Xbyak::Tmm tmmC2 = tmm2;
-    Xbyak::Tmm tmmA = tmm3;
-    Xbyak::Tmm tmmB0 = tmm4;
-    Xbyak::Tmm tmmB1 = tmm5;
-    Xbyak::Tmm tmmB2 = tmm6;
-
-    void generate() {
-        /*
-                       B: 1x3 tiles
-        A : 1x1 tiles  C: 1x3 tiles
-        */
-        Xbyak::Label loop_k_tile;
-        assert(m_K % 32 == 0);
-        tilezero(tmmC0);
-        tilezero(tmmC1);
-        tilezero(tmmC2);
-        mov(reg_B_stride, 64);
-        mov(reg_ktiles, m_K / 32);
-        const size_t step_a = 64;
-        const size_t step_b = 1024*3;
-        bool do_sw_prefetch = std::getenv("SWPF") != nullptr;
-    
-        align(64, false);
-        L(loop_k_tile);
-        if (do_sw_prefetch) {
-            for (auto cl = 0; cl < 16; cl++) {
-                auto cl_offset = 64 * cl;
-                prefetcht0(ptr[reg_A_addr + step_a + cl_offset]);
-                prefetcht0(ptr[reg_B_addr + step_b + cl_offset]);
-
-            }
-        }
-        tileloadd(tmmA, ptr[reg_A_addr + reg_A_stride]);
-        tileloadd(tmmB0, ptr[reg_B_addr + reg_B_stride]);
-        tdpbf16ps(tmmC0, tmmA, tmmB0);
-
-        if (do_sw_prefetch) {
-            for (auto cl = 0; cl < 16; cl++) {
-                auto cl_offset = 64 * cl;
-                prefetcht0(ptr[reg_B_addr + 1024 + step_b + cl_offset]);
-
-            }
-        }
-        tileloadd(tmmB1, ptr[reg_B_addr + reg_B_stride + 1024]);
-        tdpbf16ps(tmmC1, tmmA, tmmB1);
-
-        if (do_sw_prefetch) {
-            for (auto cl = 0; cl < 16; cl++) {
-                auto cl_offset = 64 * cl;
-                prefetcht0(ptr[reg_B_addr + 2048 + step_b + cl_offset]);
-
-            }
-        }
-        tileloadd(tmmB2, ptr[reg_B_addr + reg_B_stride + 2048]);
-        tdpbf16ps(tmmC2, tmmA, tmmB2);
-
-        lea(reg_A_addr, ptr[reg_A_addr + step_a]);
-        lea(reg_B_addr, ptr[reg_B_addr + step_b]);
-
-        dec(reg_ktiles);
-        jnz(loop_k_tile, T_NEAR);
-    
-        tilestored(ptr[reg_C_addr + reg_C_stride], tmmC0);
-        tilestored(ptr[reg_C_addr + reg_C_stride + 64], tmmC1);
-        tilestored(ptr[reg_C_addr + reg_C_stride + 2 * 64], tmmC2);
-        ret();
-    }
-};
-
-
 #include "kernels_amx.hpp"
 // #include "kernels_avx512.hpp"
 #include "tensor2D.hpp"
@@ -577,10 +346,9 @@ int amx_jit(const int M, const int N, const int K, int times = -1000) {
     LinearAMX mm_jit(K);
     TileConfigScope tcfg(mm_jit.tile_config());
 
-    // the memory layout would be changed to KN16k16n2k
     for (int k = 0, i = 0; k < K; k += 32) {
         for (int n = 0; n < N; n += 16) {
-            amx_kernel::functional::transpose_epi32_16x16(&BPacked[i * 16 * 32], &Bt(n, k), Bt.stride);  //Each tile block is 16k16n2k
+            amx_kernel::functional::transpose_epi32_16x16(&BPacked[i * 16 * 32], &Bt(n, k), Bt.stride);
             i++;
         }
     }
@@ -727,35 +495,34 @@ int main(int argc, const char* argv[]) {
     _MM_SET_FLUSH_ZERO_MODE(_MM_FLUSH_ZERO_ON);
     std::cout << ANSIcolor("31") << "omp_get_num_threads() = " << omp_get_num_threads() << std::endl << ANSIcolor();
 
-    // std::cout << "===============================Strided load is slightly slower========================\n";
-    // profile_tileload();
-    // profile_tileload();
-    // profile_tileload();
+    std::cout << "===============================Strided load is slightly slower========================\n";
+    profile_tileload();
+    profile_tileload();
+    profile_tileload();
     std::cout << "===============================BF16========================\n";
-    // amx_mm(32, 32, 128);
-    // amx_jit<Linear32x32_AMX>(32, 32, 128);
-    // amx_mm(32, 32, 128);
-    // amx_jit<Linear32x32_AMX>(32, 32, 128);
-    amx_mm(16, 48, 128);
-    amx_jit<Linear16x48_AMX>(16, 48, 128);
-    // std::cout << "===============================32x32 (L2)========================\n";
-    // for (int i = 0; i < 2; i++) {
-    //     amx_mm(32, 32, 4096);
-    //     amx_jit<Linear32x32_AMX>(32, 32, 4096);
-    // }
-    // std::cout << "===============================32x32 (LLC)========================\n";
-    // for (int i = 0; i < 2; i++) {
-    //     amx_mm(32, 32, 4096 * 16);
-    //     amx_jit<Linear32x32_AMX>(32, 32, 4096 * 16);
-    // }
-    // std::cout << "===============================16x96========================\n";
-    // for (int i = 0; i < 2; i++) {
-    //     amx_mm(16, 96, 4096);
-    //     amx_jit<Linear16x96_AMX>(16, 96, 4096);
-    // }
-    // std::cout << "===============================16x64========================\n";
-    // for (int i = 0; i < 2; i++) {
-    //     amx_mm(16, 64, 4096);
-    //     amx_jit<Linear16x64_AMX>(16, 64, 4096);
-    // }
+    amx_mm(32, 32, 128);
+    amx_jit<Linear32x32_AMX>(32, 32, 128);
+    amx_mm(32, 32, 128);
+    amx_jit<Linear32x32_AMX>(32, 32, 128);
+
+    std::cout << "===============================32x32 (L2)========================\n";
+    for (int i = 0; i < 2; i++) {
+        amx_mm(32, 32, 4096);
+        amx_jit<Linear32x32_AMX>(32, 32, 4096);
+    }
+    std::cout << "===============================32x32 (LLC)========================\n";
+    for (int i = 0; i < 2; i++) {
+        amx_mm(32, 32, 4096 * 16);
+        amx_jit<Linear32x32_AMX>(32, 32, 4096 * 16);
+    }
+    std::cout << "===============================16x96========================\n";
+    for (int i = 0; i < 2; i++) {
+        amx_mm(16, 96, 4096);
+        amx_jit<Linear16x96_AMX>(16, 96, 4096);
+    }
+    std::cout << "===============================16x64========================\n";
+    for (int i = 0; i < 2; i++) {
+        amx_mm(16, 64, 4096);
+        amx_jit<Linear16x64_AMX>(16, 64, 4096);
+    }
 }
