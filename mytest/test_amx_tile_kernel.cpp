@@ -137,119 +137,6 @@ C : [32, 32]
 // };
 
 
-class Linear32x32_AMX_KTAIL : public jit_generator {
-public:
-    int m_K;
-    TileConfig m_tile_cfg;
-    Linear32x32_AMX_KTAIL(int K_tail) : m_K(K_tail) {
-        assert(K_tail %2 == 0);
-        create_kernel("Linear32x32_AMX_KTAIL");
-        m_tile_cfg.reset(1, 0,
-                         {
-                             {16, 64}, // C:0
-                             {16, 64}, // C:1
-                             {16, 64}, // C:2
-                             {16, 64}, // C:3
-                             {16, m_K*2}, // A0:4
-                             {16, m_K*2}, // A1:5
-                             {m_K/2, 64}, // B0:6
-                             {m_K/2, 64}, // B1:7
-                         });
-    }
-
-    const TileConfig& tile_config() { return m_tile_cfg; }
-
-    // to save push/pop: do not use `abi_save_gpr_regs`
-    Xbyak::Reg64 reg_A_addr = abi_param1;
-    Xbyak::Reg64 reg_A_stride = abi_param2;
-    Xbyak::Reg64 reg_B_addr = abi_param3;
-    Xbyak::Reg64 reg_C_addr = abi_param4;
-    Xbyak::Reg64 reg_C_stride = abi_param5;
-    Xbyak::Reg64 reg_B_stride = r10;
-    Xbyak::Reg64 reg_A1_addr = r11;
-    Xbyak::Reg64 reg_ktiles = r9;
-
-    Xbyak::Tmm tmmC00 = tmm0;
-    Xbyak::Tmm tmmC10 = tmm1;
-    Xbyak::Tmm tmmC01 = tmm2;
-    Xbyak::Tmm tmmC11 = tmm3;
-    Xbyak::Tmm tmmA0 = tmm4;
-    Xbyak::Tmm tmmA1 = tmm5;
-    Xbyak::Tmm tmmB0 = tmm6;
-    Xbyak::Tmm tmmB1 = tmm7;
-
-
-    void generate() {
-        Xbyak::Label loop_k_tile;
-        // assert(m_K % 2 == 0);
-        tilezero(tmmC00);
-        tilezero(tmmC01);
-        tilezero(tmmC10);
-        tilezero(tmmC11);
-        mov(reg_B_stride, 64);
-        // mov(reg_ktiles, m_K / 32);
-        const size_t step_a = 64;
-        const size_t step_b = 2048;
-        const size_t step_c = 64;
-        bool do_sw_prefetch = std::getenv("SWPF") != nullptr;   
-        align(64, false);
-        L(loop_k_tile);
-        if (do_sw_prefetch) {
-            for (auto cl = 0; cl < 16; cl++) {
-                auto cl_offset = 64 * cl;
-                prefetcht0(ptr[reg_A_addr + step_a + cl_offset]);
-            }
-        }
-        tileloadd(tmmA0, ptr[reg_A_addr + reg_A_stride]);
-        tileloadd(tmmB0, ptr[reg_B_addr + reg_B_stride]);
-        tdpbf16ps(tmmC00, tmmA0, tmmB0);
-
-        if (do_sw_prefetch) {
-            for (auto cl = 0; cl < 16; cl++) {
-                auto cl_offset = 64 * cl;
-                prefetcht0(ptr[reg_B_addr + step_b + cl_offset]);
-            }
-        }
-
-        lea(reg_A1_addr, ptr[reg_A_addr + reg_A_stride * 8]);
-        lea(reg_A1_addr, ptr[reg_A1_addr + reg_A_stride * 8]);
-        if (do_sw_prefetch) {
-            for (auto cl = 0; cl < 16; cl++) {
-                auto cl_offset = 64 * cl;
-                prefetcht0(ptr[reg_A1_addr + step_a + cl_offset]);
-            }
-        }
-        tileloadd(tmmA1, ptr[reg_A1_addr + reg_A_stride]);
-        tdpbf16ps(tmmC10, tmmA1, tmmB0);
-
-        if (do_sw_prefetch) {
-            for (auto cl = 0; cl < 16; cl++) {
-                auto cl_offset = 64 * cl;
-                 prefetcht0(ptr[reg_B_addr + 1024 +  step_b + cl_offset]);
-            }
-        }
-        tileloadd(tmmB1, ptr[reg_B_addr + reg_B_stride + 1024]);
-        tdpbf16ps(tmmC01, tmmA0, tmmB1);
-        tdpbf16ps(tmmC11, tmmA1, tmmB1);
-    
-        // lea(reg_A_addr, ptr[reg_A_addr + step_a]);
-        // lea(reg_B_addr, ptr[reg_B_addr + step_b]);
-
-        // dec(reg_ktiles);
-        // jnz(loop_k_tile, T_NEAR);
-
-        tilestored(ptr[reg_C_addr + reg_C_stride], tmmC00);
-        tilestored(ptr[reg_C_addr + reg_C_stride + step_c], tmmC01);
-        // lea(reg_C_addr, ptr[reg_C_addr + reg_C_stride * 16]);
-        lea(reg_C_addr, ptr[reg_C_addr + reg_C_stride * 8]);
-        lea(reg_C_addr, ptr[reg_C_addr + reg_C_stride * 8]);
-
-        tilestored(ptr[reg_C_addr + reg_C_stride], tmmC10);
-        tilestored(ptr[reg_C_addr + reg_C_stride + step_c], tmmC11);
-        ret();
-    }
-};
-
 /*
 C = A @ B
 
@@ -260,6 +147,7 @@ A : [32, K]
 B : [K, 32] repacked
 C : [32, 32]
 */
+
 
 class Linear32x32_AMX : public jit_generator {
 public:
@@ -304,7 +192,7 @@ public:
 
     void generate() {
         Xbyak::Label loop_k_tile;
-        // assert(m_K % 32 == 0);
+        assert(m_K % 32 == 0);
         tilezero(tmmC00);
         tilezero(tmmC01);
         tilezero(tmmC10);
@@ -360,7 +248,7 @@ public:
 
         dec(reg_ktiles);
         jnz(loop_k_tile, T_NEAR);
-
+    
         tilestored(ptr[reg_C_addr + reg_C_stride], tmmC00);
         tilestored(ptr[reg_C_addr + reg_C_stride + step_c], tmmC01);
         // lea(reg_C_addr, ptr[reg_C_addr + reg_C_stride * 16]);
@@ -797,20 +685,15 @@ int amx_jit(const int M, const int N, const int K, int times = -1000) {
                              true); // ensure stride of A matrix is multiple of
                                     // cache line, which is vital to performance.
     tensor2D<ov::bfloat16> B(K, N, true);
-    // Default transpose would contruct new tensor with K alignment with 64 byte.
     auto Bt = B.Tr();
-    //Padding the Ktail to make K aligh with 32 bf16 elements(64 bytes),
-    int K_padding = ((K + 31) / 32 ) *32;
-    tensor2D<ov::bfloat16> BPacked(K_padding * N, 1, true);
+    tensor2D<ov::bfloat16> BPacked(K * N, 1, true);
     tensor2D<float> C0(M, N, true); // reference result
     tensor2D<float> C1(M, N, true); // actual result
     LinearAMX mm_jit(K);
     TileConfigScope tcfg(mm_jit.tile_config());
 
-    // the memory layout would be reorder to KN16k16n2k
-    // The K Padding value would be also reordered. But would not be loaded into tile because of tile config.
-    // when having K padding, both input and output of reordering would be 64 byter
-    for (int k = 0, i = 0; k < K_padding; k += 32) {
+    // the memory layout would be changed to KN16k16n2k
+    for (int k = 0, i = 0; k < K; k += 32) {
         for (int n = 0; n < N; n += 16) {
             amx_kernel::functional::transpose_epi32_16x16(&BPacked[i * 16 * 32], &Bt(n, k), Bt.stride);  //Each tile block is 16k16n2k
             i++;
@@ -964,34 +847,32 @@ int main(int argc, const char* argv[]) {
     // profile_tileload();
     // profile_tileload();
     std::cout << "===============================BF16========================\n";
-    // amx_mm(32, 32, 128);
-    // amx_jit<Linear32x32_AMX>(32, 32, 128);
-    // amx_mm(32, 32, 128);
-    // amx_jit<Linear32x32_AMX>(32, 32, 128);
-    // amx_mm(16, 48, 128);
-    // amx_jit<Linear16x48_AMX>(16, 48, 128);
-    // amx_jit<Linear48x16_AMX>(48, 16, 1280);
-    amx_jit<Linear32x32_AMX_KTAIL>(32, 32, 30);
+    amx_mm(32, 32, 128);
+    amx_jit<Linear32x32_AMX>(32, 32, 128);
+    amx_mm(32, 32, 128);
+    amx_jit<Linear32x32_AMX>(32, 32, 128);
+    amx_mm(16, 48, 128);
+    amx_jit<Linear16x48_AMX>(16, 48, 512);
+    amx_jit<Linear48x16_AMX>(48, 16, 1280);
 
-
-    // std::cout << "===============================32x32 (L2)========================\n";
-    // for (int i = 0; i < 2; i++) {
-    //     amx_mm(32, 32, 4096);
-    //     amx_jit<Linear32x32_AMX>(32, 32, 4096);
-    // }
-    // std::cout << "===============================32x32 (LLC)========================\n";
-    // for (int i = 0; i < 2; i++) {
-    //     amx_mm(32, 32, 4096 * 16);
-    //     amx_jit<Linear32x32_AMX>(32, 32, 4096 * 16);
-    // }
-    // std::cout << "===============================16x96========================\n";
-    // for (int i = 0; i < 2; i++) {
-    //     amx_mm(16, 96, 4096);
-    //     amx_jit<Linear16x96_AMX>(16, 96, 4096);
-    // }
-    // std::cout << "===============================16x64========================\n";
-    // for (int i = 0; i < 2; i++) {
-    //     amx_mm(16, 64, 4096);
-    //     amx_jit<Linear16x64_AMX>(16, 64, 4096);
-    // }
+    std::cout << "===============================32x32 (L2)========================\n";
+    for (int i = 0; i < 2; i++) {
+        amx_mm(32, 32, 4096);
+        amx_jit<Linear32x32_AMX>(32, 32, 4096);
+    }
+    std::cout << "===============================32x32 (LLC)========================\n";
+    for (int i = 0; i < 2; i++) {
+        amx_mm(32, 32, 4096 * 16);
+        amx_jit<Linear32x32_AMX>(32, 32, 4096 * 16);
+    }
+    std::cout << "===============================16x96========================\n";
+    for (int i = 0; i < 2; i++) {
+        amx_mm(16, 96, 4096);
+        amx_jit<Linear16x96_AMX>(16, 96, 4096);
+    }
+    std::cout << "===============================16x64========================\n";
+    for (int i = 0; i < 2; i++) {
+        amx_mm(16, 64, 4096);
+        amx_jit<Linear16x64_AMX>(16, 64, 4096);
+    }
 }
