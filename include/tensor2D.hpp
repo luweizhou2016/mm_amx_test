@@ -65,6 +65,17 @@ struct tensor2D {
         }
         return ret;
     }
+    tensor2D<T> Tr_Align_Dim0() {
+        int aligned_dim0 = (dims[0] + 15) / 16 * 16;
+        tensor2D<T> ret(dims[1], aligned_dim0);
+        for(int c0=0; c0 < dims[0]; ++c0) {
+            for(int c1=0; c1 < dims[1]; ++c1) {
+                ret(c1, c0) = (*this)(c0, c1);
+            }
+        }
+        ret.dims[0] = dims[0];
+        return ret;
+    }
     tensor2D<T> clone() const {
         tensor2D<T> ret;
         ret.resize(dims[0], dims[1], force_compact);
