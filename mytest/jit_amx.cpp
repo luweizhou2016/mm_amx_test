@@ -6,43 +6,6 @@
 #error NOT SUPPORTED
 #endif
 
-/*
-C = A @ B
-
-               B: 1x2 tiles
-A : 2x1 tiles  C: 2x2 tiles
-
-A : [32, K]
-B : [K, 32] repacked
-C : [32, 32]
-*/
-
-// template <typename T, typename U>
-// inline typename remove_reference<T>::type div_up(const T a, const U b) {
-//     assert(b);
-//     return static_cast<typename remove_reference<T>::type>((a + b - 1) / b);
-// }
-
-// template <typename T, typename U>
-// inline void balance211(T n, U team, U tid, T &n_start, T &n_end) {
-//     T n_min = 1;
-//     T &n_my = n_end;
-//     if (team <= 1 || n == 0) {
-//         n_start = 0;
-//         n_my = n;
-//     } else if (n_min == 1) {
-//         // team = T1 + T2
-//         // n = T1*n1 + T2*n2  (n1 - n2 = 1)
-//         T n1 = utils::div_up(n, (T)team);
-//         T n2 = n1 - 1;
-//         T T1 = n - n2 * (T)team;
-//         n_my = (T)tid < T1 ? n1 : n2;
-//         n_start = (T)tid <= T1 ? (T)tid * n1 : T1 * n1 + ((T)tid - T1) * n2;
-//     }
-
-//     n_end += n_start;
-// }
-
 
 class Linear32x32_AMX : public jit_generator {
 public:
@@ -88,17 +51,23 @@ public:
     void generate() {
         Xbyak::Label loop_k_tile;
         assert(m_K % 32 == 0);
+
         tilezero(tmmC00);
+        // ret();
+
         tilezero(tmmC01);
         tilezero(tmmC10);
         tilezero(tmmC11);
+
         mov(reg_B_stride, 64);
         mov(reg_ktiles, m_K / 32);
         const size_t step_a = 64;
         const size_t step_b = 2048;
         const size_t step_c = 64;
-        bool do_sw_prefetch = std::getenv("SWPF") != nullptr;   
         align(64, false);
+        // bool do_sw_prefetch = std::getenv("SWPF") != nullptr;
+        bool do_sw_prefetch = false;
+
         L(loop_k_tile);
         if (do_sw_prefetch) {
             for (auto cl = 0; cl < 16; cl++) {
@@ -137,7 +106,6 @@ public:
         tileloadd(tmmB1, ptr[reg_B_addr + reg_B_stride + 1024]);
         tdpbf16ps(tmmC01, tmmA0, tmmB1);
         tdpbf16ps(tmmC11, tmmA1, tmmB1);
-    
         lea(reg_A_addr, ptr[reg_A_addr + step_a]);
         lea(reg_B_addr, ptr[reg_B_addr + step_b]);
 
@@ -193,48 +161,24 @@ int amx_jit(const int M, const int N, const int K, int times = -1000) {
     LinearAMX mm_jit(K);
     TileConfigScope tcfg(mm_jit.tile_config());
 
-    // the memory layout would be changed to KN16k16n2k
-    for (int k = 0, i = 0; k < K; k += 32) {
-        for (int n = 0; n < N; n += 16) {
-            amx_kernel::functional::transpose_epi32_16x16(&BPacked[i * 16 * 32], &Bt(n, k), Bt.stride);  //Each tile block is 16k16n2k
+    // the memory layout would be changed to NK2n16k16n2k
+    for (int n = 0, i = 0; n < N; n += 32) {
+        for (int k = 0; k < K; k += 32) {
+            amx_kernel::functional::transpose_epi32_16x16(&BPacked[i * 16 * 32], &Bt(n, k), Bt.stride);
+            i++;
+            amx_kernel::functional::transpose_epi32_16x16(&BPacked[i * 16 * 32], &Bt(n + 16, k), Bt.stride);
             i++;
         }
     }
-
     C0 = 0;
     matmul(A, B, C0);
-    mm_jit(&A[0], A.stride, &BPacked[0], &C1[0], C1.stride);
+    #pragma omp parallel for collapse(2)
+    for (int j = 0; j < M/32; j++) {
+        for (int i = 0; i < N/32; i++) {
+            mm_jit(&A(j*32,0), A.stride, &BPacked[i*32*K], &C1(j*32, i*32), C1.stride);
+        }
+    }
 
-//     std::string acc;
-//     std::string acc_color;
-//     int m_block = M / 32;
-//     int n_block = N / 32;
-//     int total_work = m_block * n_block;
-// #define ROUNDUP(x, y) ((x + y-1)/y)
-//     #pragma omp parallel
-//     {
-//         int ithr = omp_get_thread_num();
-//         int nthr = omp_thread_count();
-//         int work_mount = ROUNDUP(total_work, thread_cnt);
-//         int start {0}, end {0};
-//         balance211(work_amount, nthr, ithr, start, end);
-//         end = end > total_work
-//         while(start < end) {
-//             auto mb_idx = start / n_block;
-//             auto nb_idx = start % n_block;
-
-//             auto A_ptr = &A[mb_idx*32]
-//             auto B_ptr =
-//             auto C_ptr =
-
-//             mm_jit(&A[0], A.stride, &BPacked[0], &C1[0], C1.stride);
-//             start++;
-
-
-//         }
-
-
-//     }
     std::string acc;
     std::string acc_color;
     if (C0 == C1) {
@@ -304,5 +248,5 @@ int main(int argc, const char* argv[]) {
     _MM_SET_FLUSH_ZERO_MODE(_MM_FLUSH_ZERO_ON);
     std::cout << ANSIcolor("31") << "omp_get_num_threads() = " << omp_get_num_threads() << std::endl << ANSIcolor();
     std::cout << "===============================BF16========================\n";
-    amx_jit<Linear32x32_AMX>(32, 32, 128);
+    amx_jit<Linear32x32_AMX>(64, 64, 128);
 }
