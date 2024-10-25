@@ -51,10 +51,7 @@ public:
     void generate() {
         Xbyak::Label loop_k_tile;
         assert(m_K % 32 == 0);
-
         tilezero(tmmC00);
-        // ret();
-
         tilezero(tmmC01);
         tilezero(tmmC10);
         tilezero(tmmC11);
@@ -65,8 +62,7 @@ public:
         const size_t step_b = 2048;
         const size_t step_c = 64;
         align(64, false);
-        // bool do_sw_prefetch = std::getenv("SWPF") != nullptr;
-        bool do_sw_prefetch = false;
+        bool do_sw_prefetch = std::getenv("SWPF") != nullptr;
 
         L(loop_k_tile);
         if (do_sw_prefetch) {
@@ -172,7 +168,8 @@ int amx_jit(const int M, const int N, const int K, int times = -1000) {
     }
     C0 = 0;
     matmul(A, B, C0);
-    #pragma omp parallel for collapse(2)
+    // OMP can't work even only tileload...
+    // #pragma omp parallel for collapse(2)
     for (int j = 0; j < M/32; j++) {
         for (int i = 0; i < N/32; i++) {
             mm_jit(&A(j*32,0), A.stride, &BPacked[i*32*K], &C1(j*32, i*32), C1.stride);
@@ -205,40 +202,6 @@ int amx_jit(const int M, const int N, const int K, int times = -1000) {
     return 0;
 }
 
-int amx_mm(const int M, const int N, int K, int times = -1000) {
-    tensor2D<ov::bfloat16> A(M, K,
-                             true); // ensure stride of A matrix is multiple of
-                                    // cache line, which is vital to performance.
-    tensor2D<ov::bfloat16> B(K, N, true);
-    auto Bt = B.Tr();
-    std::vector<ov::bfloat16> BPacked(K * N, 0);
-    tensor2D<float> C0(M, N, true); // reference result
-    tensor2D<float> C1(M, N, true); // actual result
-    amx_kernel::Matmul<ov::bfloat16, ov::bfloat16> mm32x32(true, true);
-    amx_kernel::PP::BiasGeluStore<float, amx_kernel::PP::Steps::NONE> pp(C1);
-
-    std::string acc;
-    std::string acc_color;
-    C0 = 0;
-    matmul(A, B, C0);
-
-    mm32x32(A, Bt, 0, N, pp);
-    if (C0 == C1) {
-        acc = "[PASS]";
-    } else {
-        acc_color = "1;31";
-        acc = "[FAIL]";
-    }
-
-    timer.tag(__func__, " (M=", M, ",N=", N, ",K=", K, ")", acc)
-        .color(acc_color)(
-            times, [&]() { mm32x32(A, Bt, 0, N, pp); },
-            M * N * K * 2 // OPS per call
-        );
-
-    return 0;
-}
-
 int main(int argc, const char* argv[]) {
     srand(0);
     bool initAMX = initXTILE();
@@ -248,5 +211,5 @@ int main(int argc, const char* argv[]) {
     _MM_SET_FLUSH_ZERO_MODE(_MM_FLUSH_ZERO_ON);
     std::cout << ANSIcolor("31") << "omp_get_num_threads() = " << omp_get_num_threads() << std::endl << ANSIcolor();
     std::cout << "===============================BF16========================\n";
-    amx_jit<Linear32x32_AMX>(64, 64, 128);
+    amx_jit<Linear32x32_AMX>(1024, 1024, 128);
 }
