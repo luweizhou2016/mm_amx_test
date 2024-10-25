@@ -1,3 +1,17 @@
+// The test is used to use OMP to test AMX kernel.
+// AMX kernel(2x2) would first accumulate all the K dimensions. m/32 * n /32 would be split via cores.
+//  OMP_NUM_THREADS=8 ./a.out
+// ENV: USE_NUMA = 0
+// ENV: CLFLUSH = ""
+// omp_get_num_threads() = 8
+// initXTILE success!
+// ===============================BF16========================
+// [all pass] with max rtol,atol=0,0
+// rdtsc is calibrating ... done.
+// amx_jit_(M=_1024_,N=_1024_,K=_128_)_[PASS]      : 0.16 us x 2557015, HW_CYCLES=517 CPU~3.19GHz 519217.52(Ops/cycle) 1655.937(TOps/s)
+// [all pass] with max rtol,atol=0.00,0.00
+// amx_jit_(M=_4096_,N=_4096_,K=_128_)_[PASS]      : 0.16 us x 348593, HW_CYCLES=514 CPU~3.19GHz
+
 #include "jit.hpp"
 #include <vector>
 #include <omp.h>
@@ -155,8 +169,13 @@ int amx_jit(const int M, const int N, const int K, int times = -1000) {
     tensor2D<float> C0(M, N, true); // reference result
     tensor2D<float> C1(M, N, true); // actual result
     LinearAMX mm_jit(K);
-    TileConfigScope tcfg(mm_jit.tile_config());
-
+    // TileConfigScope tcfg(mm_jit.tile_config());
+    #pragma omp parallel
+    {
+        TileConfiger tile_config;
+        auto ptr_conf = mm_jit.tile_config();
+        tile_config(&ptr_conf);
+    }
     // the memory layout would be changed to NK2n16k16n2k
     for (int n = 0, i = 0; n < N; n += 32) {
         for (int k = 0; k < K; k += 32) {
@@ -168,8 +187,8 @@ int amx_jit(const int M, const int N, const int K, int times = -1000) {
     }
     C0 = 0;
     matmul(A, B, C0);
-    // OMP can't work even only tileload...
-    // #pragma omp parallel for collapse(2)
+    #pragma omp parallel for collapse(2)       //split M/32*N/32 acrosss cores.
+    //#pragma omp parallel for                 //split M/32 across cores.
     for (int j = 0; j < M/32; j++) {
         for (int i = 0; i < N/32; i++) {
             mm_jit(&A(j*32,0), A.stride, &BPacked[i*32*K], &C1(j*32, i*32), C1.stride);
@@ -204,12 +223,19 @@ int amx_jit(const int M, const int N, const int K, int times = -1000) {
 
 int main(int argc, const char* argv[]) {
     srand(0);
+    #pragma omp parallel
+    {
+        #pragma omp single
+        {
+            std::cout << ANSIcolor("31") << "omp_get_num_threads() = " << omp_get_num_threads() << std::endl << ANSIcolor();
+        }
+    }
     bool initAMX = initXTILE();
-
     timer.set_app(argv[0]);
 
     _MM_SET_FLUSH_ZERO_MODE(_MM_FLUSH_ZERO_ON);
-    std::cout << ANSIcolor("31") << "omp_get_num_threads() = " << omp_get_num_threads() << std::endl << ANSIcolor();
     std::cout << "===============================BF16========================\n";
     amx_jit<Linear32x32_AMX>(1024, 1024, 128);
+    amx_jit<Linear32x32_AMX>(4096, 4096, 128);
+
 }
