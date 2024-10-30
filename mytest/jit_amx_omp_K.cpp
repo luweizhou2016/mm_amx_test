@@ -1,16 +1,10 @@
 // The test is used to use OMP to test AMX kernel.
-// AMX kernel(2x2) would first accumulate all the K dimensions. m/32 * n /32 would be split via cores.
+// AMX kernel(2x2) would first accumulate all the K dimensions. (m/32 * n /n_block) would be split via cores.
+// For JIT kernel: [32, K] * [K, n_block] = [32, n_block]
+    //Inner-most loop is K, accumulate all the K.
+    //outer loop is n_block.
 //  OMP_NUM_THREADS=8 ./a.out
-// ENV: USE_NUMA = 0
-// ENV: CLFLUSH = ""
-// omp_get_num_threads() = 8
-// initXTILE success!
-// ===============================BF16========================
-// [all pass] with max rtol,atol=0,0
-// rdtsc is calibrating ... done.
-// amx_jit_(M=_1024_,N=_1024_,K=_128_)_[PASS]      : 0.16 us x 2557015, HW_CYCLES=517 CPU~3.19GHz 519217.52(Ops/cycle) 1655.937(TOps/s)
-// [all pass] with max rtol,atol=0.00,0.00
-// amx_jit_(M=_4096_,N=_4096_,K=_128_)_[PASS]      : 0.16 us x 348593, HW_CYCLES=514 CPU~3.19GHz
+
 
 #include "jit.hpp"
 #include <vector>

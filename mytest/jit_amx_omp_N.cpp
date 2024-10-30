@@ -1,4 +1,11 @@
 
+// The test is used to use OMP to test AMX kernel.
+// AMX kernel(2x2) would first accumulate all the N dimensions: (m/32) would be split via cores. 
+//                                                              K/kblock would loop on one hw core. K not divided across cores.
+// For JIT kernel: [32, k_block] * [k_block, n] = [32, n] accumulated on k_block
+    //Inner-most loop is N,
+    //outer loop is k_block.
+//  OMP_NUM_THREADS=8 ./a.out
 
 #include "jit.hpp"
 #include <vector>
